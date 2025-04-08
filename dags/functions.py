@@ -179,12 +179,37 @@ def make_status():
     )
 
     # Afficher le DataFrame avec la nouvelle colonne 'status'
-    print(df_current_merged.head())
+    return df_current_merged
 
-def test():
+def save_to_csv():
+    df_current_merged = make_status()
     CSV_path = get_files_directory() + 'df_previous_merged.csv'
-    df = pd.read_csv(CSV_path)
-    print(df)
+
+    try:
+        df_previous = pd.read_csv(CSV_path)
+        print("Fichier précédent chargé depuis CSV.")
+    except FileNotFoundError:
+        df_previous = pd.DataFrame(columns=["id", "name", "mode", "begin", "end", "severity", "tags", "title", "message", "status"])
+        print("Aucun fichier précédent trouvé, c’est le premier appel ?")
+        
+    df_current_merged.to_csv(f"df_previous_merged.csv", index=False)
+    return df_previous
+
+def make_hist():
+    df_previous = save_to_csv()
+    CSV_path = get_files_directory() + 'df_previous_merged.csv'
+    # Ajouter la colonne 'status' pour les disruptions actuelles
+    df_current = pd.read_csv(CSV_path)
+    df_current["status"] = df_current["id"].apply(
+        lambda x: "new" if x not in df_previous["id"].values else "now"
+    )
+
+    # Identifier les disruptions terminées ("finished")
+    finished_ids = set(df_previous["id"]) - set(df_current["id"])
+    df_finished = df_previous[df_previous["id"].isin(finished_ids)].copy()
+    df_finished["status"] = "finished"  # Ajouter le statut "finished"
+    df_current_histo = pd.concat([df_current, df_finished], ignore_index=True)
+    print(df_current_histo['mode'].value_counts())
 
 def send_mail():
     import smtplib
@@ -203,6 +228,11 @@ def send_mail():
     msg["To"] = receiver_email
     msg["Subject"] = subject
     msg.set_content(body)
+
+    #Attach PDF
+    with open(get_files_directory() + "Répartition.pdf", "rb") as f:
+        pdf_data = f.read()
+        msg.add_attachment(pdf_data, maintype="application", subtype="pdf", filename="document.pdf")
 
     #Send email via SMTP
     with smtplib.SMTP("192.168.1.26", 2500) as smtp:

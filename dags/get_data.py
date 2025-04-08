@@ -12,7 +12,7 @@ dag = DAG(
 
 get_dataset = PythonOperator(
     task_id='get_dataset',
-    python_callable=functions.test,
+    python_callable=functions.make_hist,
     op_kwargs={"dataset_path": "Solar_Energy_Production.csv","values": ['name', 'id', 'address', 'date', 'kWh']},
     dag=dag,
 )
