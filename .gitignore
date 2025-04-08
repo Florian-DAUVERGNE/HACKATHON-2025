@@ -11,3 +11,5 @@ airflow.cfg
 airflow.db
 tests/other
 data
+env_sncf
+mistral_models
