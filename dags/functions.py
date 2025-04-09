@@ -179,10 +179,10 @@ def make_status():
     )
 
     # Afficher le DataFrame avec la nouvelle colonne 'status'
-    return df_current_merged
+    return df_current_merged,df_preview_merged
 
 def save_to_csv():
-    df_current_merged = make_status()
+    df_current_merged,df_preview_merged = make_status()
     CSV_path = get_files_directory() + 'df_previous_merged.csv'
 
     try:
@@ -193,10 +193,10 @@ def save_to_csv():
         print("Aucun fichier précédent trouvé, c’est le premier appel ?")
         
     df_current_merged.to_csv(f"df_previous_merged.csv", index=False)
-    return df_previous
+    return df_previous,df_preview_merged
 
 def make_hist():
-    df_previous = save_to_csv()
+    df_previous,df_preview_merged = save_to_csv()
     CSV_path = get_files_directory() + 'df_previous_merged.csv'
     # Ajouter la colonne 'status' pour les disruptions actuelles
     df_current = pd.read_csv(CSV_path)
@@ -209,7 +209,86 @@ def make_hist():
     df_finished = df_previous[df_previous["id"].isin(finished_ids)].copy()
     df_finished["status"] = "finished"  # Ajouter le statut "finished"
     df_current_histo = pd.concat([df_current, df_finished], ignore_index=True)
-    print(df_current_histo['mode'].value_counts())
+    return df_current_histo,df_preview_merged
+
+def make_RF_DF():
+    df_current_histo,df_preview_merged = make_hist()
+    df_current_filtered = df_current_histo[df_current_histo['mode'].isin(['RapidTransit', 'LocalTrain', 'Tramway', 'Metro'])]
+    df_preview_filtered = df_preview_merged[df_preview_merged['mode'].isin(['RapidTransit', 'LocalTrain', 'Tramway', 'Metro'])]
+    return df_current_filtered,df_preview_filtered
+
+def make_INFOMESSAGE_API_request():
+    # URL de base de l'API
+    base_url = "https://prim.iledefrance-mobilites.fr/marketplace/v2/navitia/line_reports/line_reports"
+    headers = {
+        "apikey": API_KEY  # Remplace avec ta vraie clé API
+    }
+
+    # Pagination
+    start_page = 0
+    items_per_page = 25
+    all_rows = []
+
+    while True:
+        params = {
+            "start_page": start_page,
+            "count": items_per_page
+        }
+        
+        response = requests.get(base_url, headers=headers, params=params)
+        
+        if response.status_code != 200:
+            print(f"Erreur {response.status_code} à la page {start_page}")
+            break
+
+        json_data = response.json()
+        disruptions = json_data.get("disruptions", [])
+
+        if not disruptions:
+            break  # Plus de disruptions à parcourir
+
+        # Traitement de chaque disruption
+        for disruption in disruptions:
+            html_message = next(
+                (msg['text'] for msg in disruption.get('messages', [])
+                if msg.get('channel', {}).get('content_type') == 'text/html'),
+                None
+            )
+            
+            row = {
+                'priority': disruption['severity']['priority'],
+                'effect': disruption['severity']['effect'],
+                'severity_text': disruption['severity']['name'],
+                #'begin': disruption['application_periods'][0]['begin'],
+                #'end': disruption['application_periods'][0]['end'],
+                'id': disruption['id'],
+                'text': html_message
+            }
+            all_rows.append(row)
+
+        print(f"Page {start_page} traitée avec {len(disruptions)} disruptions.")
+        
+        # Vérification fin de pagination
+        pagination = json_data.get('pagination', {})
+        total_result = pagination.get('total_result', 0)
+        if (start_page + 1) * items_per_page >= total_result:
+            break
+
+        start_page += 1
+
+    # Construction du DataFrame
+    df_v2 = pd.DataFrame(all_rows)
+    return df_v2
+
+
+def make_disruptions_pag_DF():
+    df_current_filtered,df_preview_filtered = make_RF_DF()
+    df_v2 = make_INFOMESSAGE_API_request()
+    print(type(df_current_filtered))
+    df_current_v2_merged = pd.merge(df_current_filtered, df_v2, on=['id'], how='left')
+    print(df_current_v2_merged['text'][0])
+
+
 
 def send_mail():
     import smtplib
