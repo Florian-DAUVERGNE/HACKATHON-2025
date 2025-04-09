@@ -4,8 +4,6 @@
   <br>
 </h1>
 
-
-
 <h1 align="center">
   <br>
   <img src="assets/L.I.S.A.png " alt="NeuraPrice Logo" width="200">
@@ -15,12 +13,11 @@
 </h1>
 
 <p align="center">
-  <a href="#features">Fonctionnalités</a> •
-  <a href="#installation">Installation</a> •
-  <a href="#utilisation">Utilisation</a> •
-  <a href="#credits">Crédits</a> •
-  <a href="#contribution">Contribution</a> •
-  <a href="#licence">Licence</a>
+  • <a href="#description-du-projet">Description</a>
+  • <a href="#structure-du-projet">Structure</a>
+  • <a href="#technologies-utilisées">Technologies</a>
+  • <a href="#prérequis">Prérequis</a>
+  • <a href="#installation">Installation</a>
 </p>
 
 
