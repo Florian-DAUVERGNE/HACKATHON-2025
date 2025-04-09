@@ -6,18 +6,18 @@ from collections import defaultdict
 from bs4 import BeautifulSoup
 from datetime import datetime
 import os
+import ast
 import io
+import ollama
+from ollama import generate
+from fpdf import FPDF
 
+from gtts import gTTS
 
 API_KEY = Variable.get("SNCF_API")
 URL = 'https://prim.iledefrance-mobilites.fr/marketplace/disruptions_bulk/disruptions/v2'
 
 global_data = None
-
-def get_files_directory():
-    current_directory = os.getcwd() + "/files/"
-    print(f"Les données sont stockées : {current_directory}")
-    return str(current_directory)
 
 def get_files_directory():
     current_directory = os.getcwd() + "/files/"
@@ -280,15 +280,218 @@ def make_INFOMESSAGE_API_request():
     df_v2 = pd.DataFrame(all_rows)
     return df_v2
 
-
 def make_disruptions_pag_DF():
     df_current_filtered,df_preview_filtered = make_RF_DF()
     df_v2 = make_INFOMESSAGE_API_request()
-    print(type(df_current_filtered))
     df_current_v2_merged = pd.merge(df_current_filtered, df_v2, on=['id'], how='left')
-    print(df_current_v2_merged['text'][0])
+    return df_current_v2_merged,df_preview_filtered
+
+def get_number_of_traveler_validations():
+    df_current_v2_merged,df_preview_filtered = make_disruptions_pag_DF()
+    n_validation = pd.read_csv(get_files_directory()+"data/nb_vald_par_arret_jour.csv", sep=";", encoding="utf-8")
+    print(n_validation.iloc[177:183].head(10))
+    print(df_current_v2_merged.head())
+    # Filtrer les données pour une date spécifique
+    #aujourd_hui = datetime.now()
+    aujourd_hui = datetime(2025, 3, 27)  # Exemple de date spécifique
+    yearFormat = aujourd_hui.strftime('%Y-%m-%d') 
+    lastYearToday = (aujourd_hui.replace(year=aujourd_hui.year - 1)).strftime('%Y-%m-%d')
+    # Convertir les noms des arrêts en minuscules
+    n_validation['libelle_arret'] = n_validation['libelle_arret'].str.lower()
+    numb = 0
+    stations_valid_day = []
+    # Filtrer les données pour la date spécifique
+    filtered_validation = n_validation[n_validation['jour'] == lastYearToday]
+
+    # Vérifier les arrêts dans df_current_v2_merged
+    for stop_points in df_current_v2_merged['stop_points']:
+        for stop in stop_points:
+            if stop.lower() in filtered_validation['libelle_arret'].values:
+                # Récupérer le nombre de validations correspondant
+                nb_vald = filtered_validation.loc[filtered_validation['libelle_arret'] == stop.lower(), 'nb_vald'].values
+                if len(nb_vald) > 0:
+                    stations_valid_day.append(f"{stop} {nb_vald[0]}")
+                    numb += 1
+
+    print(numb)
+    print(stations_valid_day)
+    # Convertir les colonnes 'begin' et 'end' en datetime si ce n'est pas déjà fait
+    df_current_v2_merged['begin'] = pd.to_datetime(df_current_v2_merged['begin'], format='%Y%m%dT%H%M%S', errors='coerce')
+    df_current_v2_merged['end'] = pd.to_datetime(df_current_v2_merged['end'], format='%Y%m%dT%H%M%S', errors='coerce')
+
+    # Ajouter une colonne 'total_valid_imp' initialisée à 0
+    df_current_v2_merged['total_valid_imp'] = 0
+
+    # Filtrer les données pour la date spécifique
+    filtered_validation = n_validation[n_validation['jour'] == lastYearToday]
+
+    # Parcourir chaque ligne de df_current_v2_merged
+    for index, row in df_current_v2_merged.iterrows():
+        stop_points = row['stop_points']  # Liste des arrêts impactés
+        begin = row['begin']
+        end = row['end']
+        
+        # Vérifier que begin et end sont valides
+        if pd.notnull(begin) and pd.notnull(end):
+            # Calculer la durée en heures entre begin et end
+            duration_hours = (end - begin).total_seconds() / 3600
+            
+            # Filtrer les validations pour les arrêts impactés
+            total_validations = 0
+            for stop in stop_points:
+                stop_lower = stop.lower()  # Convertir en minuscules pour correspondance
+                if stop_lower in filtered_validation['libelle_arret'].str.lower().values:
+                    # Récupérer le nombre de validations correspondant
+                    nb_vald = filtered_validation.loc[filtered_validation['libelle_arret'].str.lower() == stop_lower, 'nb_vald'].values
+                    if len(nb_vald) > 0:
+                        total_validations += nb_vald[0]
+            
+            # Réduire le total des validations en fonction de la durée
+            # Supposons que les validations sont réparties uniformément sur 24 heures
+            impacted_validations = total_validations * (duration_hours / 24)
+            
+            # Ajouter le résultat dans la colonne 'total_valid_imp'
+            df_current_v2_merged.at[index, 'total_valid_imp'] = round(impacted_validations)
+
+    # Afficher un aperçu du DataFrame mis à jour
+   # print(df_current_v2_merged[['id' ,'stop_points', 'begin', 'end', 'total_valid_imp']].head())
+
+    return df_current_v2_merged,df_preview_filtered
+
+def clean_text(text):
+    """
+    Fonction pour nettoyer le texte en supprimant les espaces inutiles autour des signes de ponctuation.
+    """
+    text = text.replace(" : ", ": ")  # Corriger les espaces avant les deux-points
+    text = text.replace(" ,", ",")  # Supprimer les espaces avant les virgules
+    text = text.strip()  # Enlever les espaces au début et à la fin du texte
+    return text
 
 
+def clean_and_describe_csv(file_path, title):
+    # Lire le fichier CSV
+    df = pd.read_csv(file_path)
+    df = df.fillna(" ")  # Remplacer les NaN par une chaîne vide
+    # Nettoyer les colonnes
+    df['tags'] = df['tags'].apply(ast.literal_eval)
+    df['stop_points'] = df['stop_points'].apply(ast.literal_eval)
+
+    # Nettoyer la colonne 'text' si elle existe
+    if 'text' in df.columns:
+        df['text'] = df['text'].apply(lambda x: BeautifulSoup(x, "html.parser").get_text())
+
+    descriptions = [title]
+    for index, row in df.iterrows():
+        # Construire la description de la perturbation
+        description = (
+            f"Perturbation {index + 1}: Début: {row['begin']} à Fin: {row['end']}, Perturbation ID : {row['id']} "
+            f"(dernière mise à jour: {row['lastUpdate']})\n"
+            f"Cause: {row['cause']}. Sévérité : {row.get('severity_text', 'non spécifiée')}. "
+            f"Tag: {', '.join(row['tags'])}. Title : {row['title']}. "
+            f"Message: {row['message']}. Message court : {row['shortMessage']}. "
+            f"Points d'arrêt affectés: {', '.join(row['stop_points'])}. "
+            f"Nom: {row['name']}. Mode: {row['mode']}. "
+        )
+        
+        # Ajouter des informations optionnelles si elles existent
+        if 'status' in row:
+            description += f"Statut perturbation: {row['status']}. "
+        if 'priority' in row:
+            description += f"Niveau de priorité: {row['priority']}. "
+        if 'effect' in row:
+            description += f"Effet: {row['effect']}. "
+        if 'text' in row:
+            description += f"Texte: {row['text']}. "
+        if 'total_valid_imp' in row:
+            description += f"Voyageurs impactés : {'valeur inconnue' if row['total_valid_imp'] == 0 else row['total_valid_imp']}."        
+
+        # Appliquer le nettoyage du texte pour enlever les espaces inutiles
+        description = clean_text(description)
+        
+        descriptions.append(description)
+        descriptions.append("")  # Ajouter une ligne vide entre chaque perturbation
+    return descriptions
+
+def make_final_df():
+    df_current_v2_merged,df_preview_filtered = get_number_of_traveler_validations()
+    df_current_v2_merged.to_csv(get_files_directory()+'df_current_final.csv', index = False)
+    df_preview_filtered.to_csv(get_files_directory()+'df_preview_final.csv', index = False)
+
+    # Traiter chaque CSV séparément avec des titres distinctifs
+    file_paths = [get_files_directory()+'df_current_final.csv', get_files_directory()+'df_preview_final.csv']
+    titles = ["Perturbations en cours :", "Perturbations à venir :"]
+
+    descriptions_list = [clean_and_describe_csv(file_path, title) for file_path, title in zip(file_paths, titles)]
+    
+    # Réunir les descriptions des deux CSV dans une seule variable
+    combined_descriptions = "\n\n".join(["\n".join(descriptions) for descriptions in descriptions_list])
+
+    # Afficher les descriptions combinées
+    print("Descriptions combinées des deux CSV :\n")
+    print(combined_descriptions)
+
+    text_file = open(get_files_directory()+"combined_descriptions.txt", "w")
+    text_file.write(combined_descriptions)
+    text_file.close()
+    return 0
+
+def make_note():
+    with open(get_files_directory()+'combined_descriptions.txt', 'r') as file:
+        combined_descriptions = file.read()
+    instruction_prompt = """Tu es un assistant qui rédige des synthèses humaines à partir de données structurées sur des perturbations ferroviaires. Pour chaque perturbation rédige un paragraphe clair, naturel et factuel en suivant les indications ci-dessous:
+1. Commence par le nom de la ligne ou du mode de transport.
+2. Indique la cause de la perturbation (par exemple, "en raison de travaux").
+3. Précise la durée de l'interruption, avec les dates de début et de fin.
+4. Mentionne si un service de remplacement est mis en place (par exemple, "bus de remplacement").
+5. Cites les points d'arrêt affectés.
+6. Mentionne le nombre de voyageurs impactés.
+7. Indique la sévérité de la perturbation (par exemple, "bloquante" ou "perturbée").
+8. Indique le niveau de priorité et le statut de la perturbation.
+9. Le statut de la perturbation (now, new, finished).
+10.Précise le statut de chaque perturbation si disponible.
+11. Génère la note uniquement en français.
+12.Sépare les perturbations qui sont en cours et à venir dans deux blocs distincts.
+13.La note doit être sous la forme d'une annonce parlée et dans un ton professionnel.
+"""
+    perturbation = combined_descriptions
+    prompt = instruction_prompt + "\n\nvoici les perturbations :\n\n" + perturbation
+
+    print(prompt)
+
+    OLLAMA_SERVER = 'http://192.168.1.26:11434'
+
+    response = requests.post(
+        f"{OLLAMA_SERVER}/api/generate",
+        json={"model": "mistral:7b-instruct", "prompt": prompt,"stream": False}
+    )
+
+    print(response.json()['response'])
+
+    # Sample text you want to save to PDF (this should already be UTF-8)
+    text = response.json()['response']
+
+    # Create a PDF instance
+    pdf = FPDF()
+
+    # Add a page to the PDF
+    pdf.add_page()
+
+    # Set font for the PDF (you can use a TrueType font that supports UTF-8)
+    pdf.add_font("Arial", "", get_files_directory() +"Arial.ttf", uni=True)
+    pdf.set_font("Arial", size=12)
+
+    # Add the text to the PDF
+    pdf.multi_cell(0, 10, text)
+
+    # Save the PDF to a file
+    pdf.output(get_files_directory() + "rapport.pdf")
+
+    # Langue (par exemple, 'fr' pour le français)
+    language = 'fr'
+
+    # Conversion du texte en audio
+    speech = gTTS(text=text, lang=language, slow=False)
+    speech.save(get_files_directory() +"output.mp3")
 
 def send_mail():
     import smtplib
@@ -309,9 +512,14 @@ def send_mail():
     msg.set_content(body)
 
     #Attach PDF
-    with open(get_files_directory() + "Répartition.pdf", "rb") as f:
+    with open(get_files_directory() + "rapport.pdf", "rb") as f:
         pdf_data = f.read()
         msg.add_attachment(pdf_data, maintype="application", subtype="pdf", filename="document.pdf")
+    
+    #Attach MP3
+    with open(get_files_directory() + "output.mp3", "rb") as f:
+        mp3_data = f.read()
+        msg.add_attachment(mp3_data, maintype="audio", subtype="mpeg", filename="audio.mp3")
 
     #Send email via SMTP
     with smtplib.SMTP("192.168.1.26", 2500) as smtp:
