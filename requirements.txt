@@ -1,2 +1,8 @@
 # Astro Runtime includes the following pre-installed providers packages: https://www.astronomer.io/docs/astro/runtime-image-architecture#provider-packages
+<<<<<<< HEAD
 --extra-index-url https://pypi.ngc.nvidia.com
+=======
+ollama
+fpdf
+gtts
+>>>>>>> cdffc4373101db054021a51201c92c55f9f14c16

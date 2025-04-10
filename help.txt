@@ -1,0 +1,14 @@
+server:
+pip install ollama
+sudo apt-get update
+sudo apt-get install curl
+sudo curl -fsSL https://ollama.com/install.sh | sh
+
+ollama pull mistral:7b-instruct
+
+
+local : 
+
+pip install ollama
+télécharger le framework sur internet
+ollama pull mistral:7b-instruct

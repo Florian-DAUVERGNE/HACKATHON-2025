@@ -10,9 +10,25 @@ dag = DAG(
  schedule_interval="0 0 */3 * *"
 )
 
-get_dataset_energy_production = PythonOperator(
+get_dataset = PythonOperator(
     task_id='get_dataset',
-    python_callable=functions.make_combine_dataset,
-    op_kwargs={"dataset_path": "Solar_Energy_Production.csv","values": ['name', 'id', 'address', 'date', 'kWh']},
+    python_callable=functions.make_final_df,
+    op_kwargs={},
     dag=dag,
 )
+
+make_note = PythonOperator(
+    task_id='make_note',
+    python_callable=functions.make_note,
+    op_kwargs={},
+    dag=dag,
+)
+
+send_mail = get_dataset_energy_production = PythonOperator(
+    task_id='send_mail',
+    python_callable=functions.send_mail,
+    op_kwargs={},
+    dag=dag,
+)
+
+get_dataset >> make_note >> send_mail

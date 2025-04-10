@@ -13,3 +13,9 @@ tests/other
 data
 env_sncf
 mistral_models
+notebook/bin
+notebook/lib
+*.deb
+*.deb.1
+*.tgz
+
